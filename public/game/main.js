@@ -6,6 +6,8 @@
 // Link options:  ?s=CODE session code   ?q=light|balanced|high|film graphics level for everyone   ?mute=1   ?voice=0
 //                ?debug=1 (log events, show numbers)   ?auto=good|mud|rock|late|nearmiss|wrongcalls|careless
 //                ?speed=N (time multiplier, for testing)   ?manual=1 (no frame loop: step with __game.advance)
+//                ?scenario=ADDRESS (a JSON file laid over the built-in scenario: see scenario-source.js)
+//                ?tier=LEVEL (start on a level but stay automatic)   ?cond=NAME (weather override)   ?tex=0 (no scanned ground)
 import * as THREE from '../vendor/three.module.min.js';
 import { SCENARIO } from './scenario.js';
 import { loadScenario } from './scenario-source.js';

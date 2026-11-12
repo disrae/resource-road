@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Calling Up: events (development)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0e1114; color: #e8ecef; font: 14px/1.4 system-ui, sans-serif; }
+  .wrap { display: grid; grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr); height: 100%; }
+  iframe { width: 100%; height: 100%; border: 0; background: #000; }
+  aside { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid #2a3138; }
+  header { padding: 10px 12px; border-bottom: 1px solid #2a3138; }
+  header b { font-size: 15px; } header p { margin: 4px 0 0; color: #9aa6b0; font-size: 12px; }
+  .list { overflow: auto; flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #1f262c; vertical-align: top; }
+  th { position: sticky; top: 0; background: #161b20; color: #9aa6b0; font-weight: 600; }
+  tr.run_start td, tr.run_end td { background: #1a222a; }
+  .ok { color: #7ddc9a; } .bad { color: #ff8c6b; } code { font: 11px ui-monospace, monospace; color: #b9c4cd; word-break: break-all; }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; grid-template-rows: 60% 40%; } aside { border-left: 0; border-top: 1px solid #2a3138; } }
+</style>
+</head>
+<body>
+<!-- Development page, not part of the game. Plays the game on the left and lists every event the
+     reporting seam (game/report.js) hands out, as a backend would receive it. Options in this
+     page's address are passed on to the game, e.g. /dev/events.html?s=TEST&q=light -->
+<div class="wrap">
+  <iframe id="game" title="Calling Up" allow="autoplay; gamepad"></iframe>
+  <aside>
+    <header><b>Reported events</b><p id="info">Waiting for the game.</p></header>
+    <div class="list"><table><thead><tr><th>#</th><th>Type</th><th>Decision</th><th>Choice</th><th>Safe</th><th>Detail</th></tr></thead><tbody id="rows"></tbody></table></div>
+  </aside>
+</div>
+<script type="module">
+const frame = document.getElementById('game'), rows = document.getElementById('rows'), info = document.getElementById('info');
+const q = new URLSearchParams(location.search); if (!q.has('s')) q.set('s', 'DEV');
+frame.src = '../?' + q.toString();
+const cell = (text, cls) => { const td = document.createElement('td'); if (cls) td.className = cls; td.textContent = text; return td; };
+let n = 0;
+function add(e) {
+  const tr = document.createElement('tr'); tr.className = e.type;
+  const rest = { ...e }; for (const k of ['v', 'type', 'runId', 'session', 'playerId', 'at', 'seq', 'id', 'choice', 'safe']) delete rest[k];
+  const code = document.createElement('code'); code.textContent = JSON.stringify(e.type === 'decision' ? { ms: e.ms, ...e.detail } : rest);
+  const detail = document.createElement('td'); detail.append(code);
+  tr.append(cell(String(++n)), cell(e.type), cell(e.id || ''), cell(e.choice || e.outcome || ''),
+    cell(e.type === 'decision' ? (e.safe ? 'yes' : 'no') : e.type === 'run_end' ? e.safe + ' of ' + e.total : '', e.type === 'decision' ? (e.safe ? 'ok' : 'bad') : ''), detail);
+  rows.append(tr); tr.scrollIntoView({ block: 'nearest' });
+  info.textContent = `session ${e.session || 'none'}  player ${e.playerId}  run ${e.runId}`;
+}
+const wait = setInterval(() => {
+  const g = frame.contentWindow && frame.contentWindow.__game;
+  if (!g || !g.onReport) return;
+  clearInterval(wait); info.textContent = 'Connected. Start a run.';
+  g.events.forEach(add); g.onReport(add);
+}, 300);
+</script>
+</body>
+</html>
