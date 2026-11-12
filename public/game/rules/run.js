@@ -296,7 +296,7 @@ export function summarize(S, st) {
     const got = st.decided[d.id];
     return { id: d.id, group: d.group, label: d.label, choice: got ? got.choice : null, choiceLabel: got ? (d.choices[got.choice] || got.choice) : '', safe: got ? got.safe : false, ms: got ? got.ms : null };
   });
-  const missed = S.inspection.items.filter((it) => st.missed[it.id]).map((it) => fill(it.truthFault + ' ' + it.missed, { channel: S.road.channel, wrongChannel: S.road.wrongChannel }));
+  const missed = S.inspection.items.filter((it) => st.missed[it.id]).map((it) => fill(it.missed, { channel: S.road.channel, wrongChannel: S.road.wrongChannel }));
   return {
     outcome: st.outcome, outcomes: st.outcomes || [st.outcome], outcomeLabel: S.summary.outcomes[st.outcome] || st.outcome,
     safe: rows.filter((r) => r.safe).length, total: rows.length, rows, missed, takeaways: S.summary.takeaways, seconds: Math.round(st.t),

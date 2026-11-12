@@ -7,6 +7,7 @@ import { WORLD } from '../../engine/terrain.js';
 import { N_SPOT, N_POINT } from '../../engine/gl/gamelight.js';
 import { buildRoute, heightSampler } from './route.js';
 import { buildGround, buildFlora } from './corridor.js';
+import { placeFor } from './place.js';
 import { conditionFor } from './conditions.js';
 import { RUNGS } from '../quality.js';
 
@@ -36,11 +37,13 @@ const FULL = { treeRange: [1100, 280], floraRange: [650, 230] };   // at the top
 export function createWorld(canvas, levelId, scenario, conditionName = null, textures = null) {
   const tierName = LEVELS[levelId] ? levelId : 'balanced', tier = LEVELS[tierName];
   const condition = conditionFor(scenario.look, conditionName);
+  const place = placeFor(scenario);
   let route = null, maskTex = null, maskRect = null;
   const engine = new Engine(canvas, tier.engine, {
     terrain(h, n) {
       const natural = Float32Array.from(h);
-      route = buildRoute(heightSampler(natural, n, WORLD.size), scenario.layout);
+      // the place: a terrain source (these heights) plus a road path (see place.js)
+      route = buildRoute(heightSampler(natural, n, WORLD.size), place.layout, place.road);
       const bb = route.bounds(), cell = 3, w = Math.ceil((bb.x1 - bb.x0) / cell), hh = Math.ceil((bb.z1 - bb.z0) / cell);
       const mask = { cell, x0: bb.x0, z0: bb.z0, w, h: hh, data: new Uint8Array(w * hh) };
       route.carve(h, n, WORLD.size, mask);

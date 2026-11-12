@@ -12,6 +12,8 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 
 export const ROUTE_DEFAULTS = {
+  path: null,                // an explicit centreline instead of the traced one: see buildRoute
+  pathZero: 0,               // metres along `path` where s = 0 (the first kilometre board) lies
   start: [4300, 450],        // world x, z where the trace begins (the staging area)
   heading: 20,               // degrees, atan2(z, x): 0 = east, 90 = south
   grade: 0.042,              // steady climb of the surveyed line
@@ -24,7 +26,11 @@ export const ROUTE_DEFAULTS = {
   meander: [[17, 265, 1.3], [5.5, 118, 4.1], [9, 610, 0.4]],   // amplitude m, wavelength m, phase
 };
 
+// sampleNatural(x, z) -> height in metres: the terrain the road is laid on (any terrain source).
 // layout: { pad: { s0, s1, width }, pullouts: [{ s, length, width }] } in metres (see scenario.js)
+// cfg: any of ROUTE_DEFAULTS. With cfg.path = [[x, z], ...] (world metres, in order of increasing
+// kilometres) the centreline follows that line, e.g. a surveyed or GPS line of a real road, instead
+// of being traced over the terrain; it is continued straight at both ends to cover sMin..sMax.
 export function buildRoute(sampleNatural, layout = {}, cfg = {}) {
   const C = { ...ROUTE_DEFAULTS, ...cfg };
   const ds = C.ds, n = Math.round((C.sMax - C.sMin) / ds) + 1;
@@ -49,14 +55,33 @@ export function buildRoute(sampleNatural, layout = {}, cfg = {}) {
     }
     return out;
   };
-  const th0 = C.heading * Math.PI / 180;
-  const fwd = trace(C.start[0], C.start[1], th0, C.grade, C.sMax + 80);
-  const back = trace(C.start[0], C.start[1], th0 + Math.PI, -C.grade, -C.sMin + 80);
-  const line = back.slice(1).reverse().concat(fwd);            // 4 m spacing, index of s=0 is back.length-1
-  const i0 = back.length - 1;
+  let line, i0;
+  if (C.path && C.path.length > 1) {
+    // a given centreline: continue it straight at both ends, then walk it in 4 m steps
+    const P = C.path.map((p) => [p[0], p[1]]);
+    const seg = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+    let total = 0; for (let i = 1; i < P.length; i++) total += seg(P[i - 1], P[i]);
+    const on = (a, b, len) => { const l = seg(a, b) || 1; return [b[0] + (b[0] - a[0]) / l * len, b[1] + (b[1] - a[1]) / l * len]; };
+    const before = Math.max(8, -C.sMin + 80 - C.pathZero), after = Math.max(8, C.sMax + 80 - (total - C.pathZero));
+    P.unshift(on(P[1], P[0], before)); P.push(on(P[P.length - 2], P[P.length - 1], after));
+    line = [P[0]];
+    let k = 1, at = 0, done = 0;                                // segment k-1..k, `at` metres into it
+    for (let want = 4; want < total + before + after; want += 4) {
+      while (k < P.length - 1 && done + seg(P[k - 1], P[k]) < want) { done += seg(P[k - 1], P[k]); k++; }
+      at = want - done; const l = seg(P[k - 1], P[k]) || 1, t = at / l;
+      line.push([P[k - 1][0] + (P[k][0] - P[k - 1][0]) * t, P[k - 1][1] + (P[k][1] - P[k - 1][1]) * t]);
+    }
+    i0 = Math.round((before + C.pathZero) / 4);
+  } else {
+    const th0 = C.heading * Math.PI / 180;
+    const fwd = trace(C.start[0], C.start[1], th0, C.grade, C.sMax + 80);
+    const back = trace(C.start[0], C.start[1], th0 + Math.PI, -C.grade, -C.sMin + 80);
+    line = back.slice(1).reverse().concat(fwd);                // 4 m spacing, index of s=0 is back.length-1
+    i0 = back.length - 1;
+  }
 
-  // 2. meander: offset along the normal, fading in after the staging area
-  const off = line.map((p, i) => {
+  // 2. meander: offset along the normal, fading in after the staging area (traced roads only)
+  const off = C.path ? line : line.map((p, i) => {
     const a = line[Math.max(0, i - 1)], b = line[Math.min(line.length - 1, i + 1)];
     let tx = b[0] - a[0], tz = b[1] - a[1]; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
     const s = (i - i0) * 4;

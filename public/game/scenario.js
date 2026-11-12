@@ -48,6 +48,24 @@ export const SCENARIO = {
     speedLimit: 50,                 // km/h shown on the dash as the sensible ceiling for this road
   },
 
+  // ---- a real place (optional, not used by the built-in scenario) ------------------------------
+  // Leave this as null to play on the game's own generated road. A location block makes the road
+  // follow a real line on the map (see game/world/place.js and HANDOVER.md, "Real places"):
+  //
+  //   location: {
+  //     name: 'for your own notes, never shown',
+  //     centre: [lat, lon],                 // decimal degrees: the middle of the place
+  //     road: [[lat, lon], [lat, lon], ...],// the road's centreline, in order of increasing kilometres
+  //     zeroAt: 0,                          // metres along that line where the first kilometre board stands
+  //     pullouts: [2110, 2260, 2410],       // metres from the first board to each pullout (replaces layout.pullouts[].s)
+  //     startHeading: 110,                  // compass degrees the road sets off in; only used when `road` is left out
+  //   },
+  //
+  // DO NOT WRITE A REAL INCIDENT LOCATION INTO THIS FILE: this repository is public. Supply it from
+  // outside instead, as a JSON file named in the link (?scenario=...): see game/scenario-source.js.
+  // A made-up example is in public/dev/demo-location.json.
+  location: null,
+
   // ---- weather and light ---------------------------------------------------------------------
   look: {
     season: 0.8,                  // 0 = spring green ... 0.8 = late autumn colour

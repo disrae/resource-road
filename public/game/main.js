@@ -8,6 +8,7 @@
 //                ?speed=N (time multiplier, for testing)   ?manual=1 (no frame loop: step with __game.advance)
 import * as THREE from '../vendor/three.module.min.js';
 import { SCENARIO } from './scenario.js';
+import { loadScenario } from './scenario-source.js';
 import { createWorld, LEVELS, levelName } from './world/world.js';
 import { loadGroundTextures } from './render/textures.js';
 import { buildProps } from './world/props.js';
@@ -32,7 +33,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); return localStorage.getItem(k) === v; } catch (e) { return false; } },
   getItem(k) { return localStorage.getItem(k); }, setItem(k, v) { localStorage.setItem(k, v); },
 };
-const S = SCENARIO, R = S.road, TX = S.text;
+const S = await loadScenario(SCENARIO, Q), R = S.road, TX = S.text;      // the built-in scenario, or one laid over it by the link
 const DEBUG = Q.get('debug') === '1';
 setDebug(DEBUG);
 document.title = S.title;
