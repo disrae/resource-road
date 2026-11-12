@@ -43,6 +43,8 @@ export const SCENARIO = {
       { s: 2410, length: 36, width: 4.5 },
     ],
     mustCallS: 985,                 // where the MUST CALL sign stands (just before the 1 km board)
+    start: { s: -34, u: -6.5 },     // where the pickup is parked on the staging pad (u negative = left of the road)
+    afterMeeting: 170,              // metres you drive on after the truck has gone before the run ends
     speedLimit: 50,                 // km/h shown on the dash as the sensible ceiling for this road
   },
 
@@ -117,6 +119,7 @@ export const SCENARIO = {
     checkCall: 'Can anybody hear this radio?',
     checkReply: 'Got you loud and clear.',
     window: [-70, 150],             // a call counts for a call point if made between these offsets (m) from it
+    realiseS: 450,                  // if the radio was left on the wrong channel, this is where you notice
     // where you must call. kind: 'entry' (starting / entering the road), 'mustcall' (sign), 'board' (posted even km)
     callPoints: [
       { id: 'call.start', km: 0, kind: 'entry', label: 'Call when you enter the road (0 km)' },
@@ -158,6 +161,44 @@ export const SCENARIO = {
       { id: 'call', text: '"{position}"', safe: true },
       { id: 'silent', text: 'Just pull out. I already called here.', safe: false },
     ],
+  },
+
+  // ---- short on-screen lines during the drive ------------------------------------------------------
+  text: {
+    objective: 'Drive up to the site at 3 km. Call on the radio where the signs tell you to.',
+    later: 'An hour later. Dark now, and the fog is down on the road.',
+    radioRealise: {
+      title: 'The radio is too quiet',
+      body: 'No chatter at all. You look down: the radio is on {wrongChannel}. The sign at the bottom said {channel}. Nobody heard your first call, and you have heard nobody.',
+      button: 'Switch to {channel} and do a radio check',
+    },
+    notCalled: 'You passed {km} km without calling.',
+    wrongDirection: 'You said "down". Up means kilometres increasing, and you are heading up.',
+    wrongKm: 'You called {said} km, but you were at the {km} km board.',
+    goodCall: 'Call made.',
+    noReply: 'Nothing comes back.',
+    oneLight: 'Only one headlight is lighting the road.',
+    softTire: 'The steering is pulling to the left.',
+    looseLoad: 'Something is sliding around in the box.',
+    edge: 'Careful. That is the edge of the road.',
+    waitPrompt: 'Wait here for the truck',
+    waiting: 'You wait.',
+    stuck: 'The wheels spin and dig in. You are stuck.',
+    rockHit: 'A hard bang under the truck. A front tire is going down.',
+    clearAsk: 'You are stopped in the pullout. What do you say on the radio?',
+    calledHelped: 'Your call at the 2 km board told the driver where you were. He was already slowing down.',
+    spareFlat: 'And the spare was flat. You are waiting for someone to bring a tire.',
+    rejoinAsk: 'Before you pull back onto the road:',
+    rejoin: {
+      clean: 'The truck has gone by.',
+      late: 'The truck has gone by.',
+      stuck: 'An hour later a crew coming down the road pulls you out.',
+      damaged: 'Forty minutes later the spare is on.',
+      damagedNoSpare: 'Two hours later someone brings you a tire.',
+      nearMiss: 'You back down to a pullout and let the truck go by.',
+    },
+    arrive: 'You carry on up to the site.',
+    continue: 'Continue',
   },
 
   // ---- surfaces ---------------------------------------------------------------------------------
