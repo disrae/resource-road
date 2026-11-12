@@ -8,7 +8,7 @@ uniform sampler2D uSceneTex, uDepthTex, uCloudTex, uCloudAux;
 uniform sampler3D uNoiseTex;
 uniform mat4 uInvViewProj;
 uniform vec2 uCloudRes;
-uniform float uMoonFade;
+uniform float uMoonFade, uCloudOn;
 in vec2 vUv;
 out vec4 o;
 
@@ -73,7 +73,7 @@ void main() {
     acc += texture(uCloudTex, uv) * w; wsum += w;
   }
   vec4 cl = wsum > 0.0 ? acc / wsum : texture(uCloudTex, vUv);
-  col = col * cl.a + cl.rgb;
+  if (uCloudOn > 0.5) col = col * cl.a + cl.rgb;
   o = vec4(max(col, vec3(0.0)), 1.0);
 }
 `;
@@ -143,7 +143,7 @@ void main() {
   c *= uExposure * texture(uAdapt, vec2(0.5)).r;
   // night vision: colour drains toward blue as the light goes
   float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-  c = mix(c, vec3(0.78, 0.92, 1.25) * l, 0.55 * uNight);
+  c = mix(c, vec3(0.78, 0.92, 1.25) * l, 0.55 * uNight * (1.0 - smoothstep(0.015, 0.2, l)));   // only where it is dark: lamp-lit things keep their colour
   c *= vec3(1.0 + 0.11 * uWarmth, 1.0 + 0.015 * uWarmth, 1.0 - 0.13 * uWarmth);
   vec2 q = vUv - 0.5;
   c *= 1.0 - uVignette * dot(q, q) * 1.5;
@@ -188,7 +188,7 @@ export class Post {
     this.composite = new Pass(COMPOSITE_FRAG, {
       ...pick('uHeightTex', 'uFlowTex', 'uWind', 'uSimTime', 'uT0', 'uMoisture', 'uCloudBase', 'uInversion', 'uPrecip',
         'uSkyLUT', 'uSunDir', 'uMoonDir', 'uLightDir', 'uLightCol', 'uSunCol', 'uSunColHigh', 'uMoonCol', 'uHaze', 'uNight',
-        'uHighCloud', 'uSkyTime', 'uCamPos', 'uNoiseTex', 'uSceneTex', 'uDepthTex', 'uCloudTex', 'uCloudAux', 'uInvViewProj', 'uMoonFade'),
+        'uHighCloud', 'uSkyTime', 'uCamPos', 'uNoiseTex', 'uSceneTex', 'uDepthTex', 'uCloudTex', 'uCloudAux', 'uInvViewProj', 'uMoonFade', 'uCloudOn'),
       uCloudRes: { value: new THREE.Vector2(2, 2) },
     });
     this.down = new Pass(DOWN_FRAG, { uTex: { value: null }, uPx: { value: new THREE.Vector2() }, uFirst: { value: 0 } });
@@ -209,6 +209,8 @@ export class Post {
     this.w = w; this.h = h;
     for (const t of [this.hdr, this.ldr, ...(this.mips || []), ...(this.ups || [])]) if (t) t.dispose();
     this.hdr = target2D(w, h);
+    if (this.hdrFog) this.hdrFog.dispose();
+    this.hdrFog = target2D(w, h);
     this.ldr = target2D(w, h, { type: THREE.UnsignedByteType });
     this.mips = []; this.ups = [];
     for (let i = 0; i < LEVELS; i++) {
@@ -220,7 +222,10 @@ export class Post {
     const r = this.renderer;
     this.composite.uniforms.uCloudRes.value.copy(cloudRes);
     this.composite.render(r, this.hdr);
-    let src = this.hdr;
+    // near fog (game): fogs the composited frame before bloom, so lit fog and lamps bloom too
+    let hdr = this.hdr;
+    if (this.nearFog && this.nearFog.active) { this.nearFog.render(r, this.hdr, this.hdrFog); hdr = this.hdrFog; }
+    let src = hdr;
     for (let i = 0; i < LEVELS; i++) {
       this.down.uniforms.uTex.value = src.texture;
       this.down.uniforms.uPx.value.set(0.5 / src.width, 0.5 / src.height);
@@ -245,7 +250,7 @@ export class Post {
     const sw = this.adaptA; this.adaptA = this.adaptB; this.adaptB = sw; this.adaptFresh = false;
     const f = this.final.uniforms;
     f.uAdapt.value = this.adaptA.texture;
-    f.uTex.value = this.hdr.texture; f.uBloom.value = acc.texture;
+    f.uTex.value = hdr.texture; f.uBloom.value = acc.texture;
     f.uExposure.value = look.exposure; f.uContrast.value = look.contrast;
     f.uSaturation.value = look.saturation; f.uWarmth.value = look.warmth;
     this.final.render(r, this.ldr);

@@ -5,6 +5,7 @@ import * as THREE from '../../vendor/three.module.min.js';
 import { GLSL_COMMON, pick } from './common.js';
 import { GLSL_SKY } from './sky.js';
 import { GLSL_SURFACE } from './land.js';
+import { GLSL_GAMELIGHT, GAMELIGHT_UNIFORMS } from './gamelight.js';
 
 const CELL = 9.0;
 
@@ -44,6 +45,7 @@ const VERT = GLSL_COMMON + GLSL_SKY + GLSL_SURFACE + /* glsl */`
 in vec3 position; in vec3 normal; in float ao;
 uniform mat4 projectionMatrix, viewMatrix;
 uniform float uGridN, uRange;
+uniform sampler2D uRoadMask; uniform vec4 uRoadMaskRect;   // cleared ground (the game's road): xy origin, zw 1/size
 uniform vec2 uOrigin;
 out vec3 vWorld; out vec3 vNormal; out vec4 vInfo; out vec3 vTint;
 void main() {
@@ -56,6 +58,8 @@ void main() {
   float forest = forestAt(xz, ter);
   float dist = length(vec3(xz.x, ter.x, xz.y) - uCamPos);
   float keep = step(rnd2 * 0.9 + 0.05, forest) * (1.0 - smoothstep(uRange * 0.72, uRange, dist));
+  vec2 muv = (xz - uRoadMaskRect.xy) * uRoadMaskRect.zw;
+  if (uRoadMaskRect.z > 0.0 && all(greaterThan(muv, vec2(0.0))) && all(lessThan(muv, vec2(1.0))) && texture(uRoadMask, muv).r > 0.5) keep = 0.0;
   if (keep < 0.01 || ter.x < 2.0) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   float stunt = mix(1.0, 0.45, smoothstep(uTreeline - 500.0, uTreeline + 100.0, ter.x));
   float hgt = mix(15.0, 34.0, rnd) * stunt * mix(0.55, 1.0, forest) * keep;
@@ -73,7 +77,7 @@ void main() {
 }
 `;
 
-const FRAG = GLSL_COMMON + GLSL_SKY + GLSL_SURFACE + /* glsl */`
+const FRAG = GLSL_COMMON + GLSL_SKY + GLSL_SURFACE + GLSL_GAMELIGHT + /* glsl */`
 in vec3 vWorld; in vec3 vNormal; in vec4 vInfo; in vec3 vTint;
 out vec4 o;
 void main() {
@@ -96,6 +100,8 @@ void main() {
   float back = pow(saturate(dot(rd, uLightDir)), 3.0) * 0.35;      // light through the needles
   vec3 amb = skyLight(N, vol) * (0.3 + 0.7 * tip);
   vec3 col = alb * (uLightCol * (wrap + back) * vis * (0.4 + 0.6 * tip) + amb);
+  vec3 gs, gr; vec3 gl = gameLight(vWorld, gl_FrontFacing ? N : -N, rd, 0.0, gs, gr);
+  col += alb * 2.2 * gl * (0.35 + 0.65 * tip);                 // headlights on the boughs
   vec3 ins; vec3 T = aerial(uCamPos, rd, dist, ins);
   o = vec4(col * T + ins, 1.0);
 }
@@ -109,7 +115,7 @@ export class Trees {
       uniforms: {
         ...pick('uHeightTex', 'uFlowTex', 'uWind', 'uSimTime', 'uT0', 'uMoisture', 'uCloudBase', 'uInversion', 'uPrecip',
           'uSkyLUT', 'uSunDir', 'uMoonDir', 'uLightDir', 'uLightCol', 'uSunCol', 'uSunColHigh', 'uMoonCol', 'uHaze', 'uNight',
-          'uHighCloud', 'uSkyTime', 'uCamPos', 'uSnowline', 'uTreeline', 'uSeason', 'uShadowTex', 'uVolTex', 'uGrid'),
+          'uHighCloud', 'uSkyTime', 'uCamPos', 'uSnowline', 'uTreeline', 'uSeason', 'uShadowTex', 'uVolTex', 'uGrid', 'uRoadMask', 'uRoadMaskRect', ...GAMELIGHT_UNIFORMS),
         uGridN: { value: 1 }, uRange: { value: 1 }, uOrigin: { value: new THREE.Vector2() },
       },
     });
@@ -117,8 +123,8 @@ export class Trees {
     this.mesh.frustumCulled = false;
     this.setDensity(density);
   }
-  setDensity(d) {
-    this.range = 520 + 620 * d;
+  setDensity(d, range = 0) {
+    this.range = range || 520 + 620 * d;      // range: explicit draw distance in metres (short in fog)
     this.n = Math.ceil(this.range / CELL) * 2;
     this.geometry.instanceCount = this.n * this.n;
     this.material.uniforms.uGridN.value = this.n;

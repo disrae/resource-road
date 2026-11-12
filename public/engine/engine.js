@@ -11,6 +11,7 @@ import { Clouds } from './gl/clouds.js';
 import { Post } from './gl/post.js';
 import { Water } from './gl/water.js';
 import { Trees } from './gl/trees.js';
+import { NearFog } from './gl/nearfog.js';
 
 export const QUALITY = {
   low:    { label: 'Low',    sim: [96, 96, 32],   cloudScale: 1 / 3,   maxSteps: 56,  stepScale: 1.6,  terrain: 384,  trees: 0.35, scale: 0.6,  maxDpr: 1,   maxPixels: 1.0e6, temporal: 0.9 },
@@ -21,8 +22,10 @@ export const QUALITY = {
 const WEATHER_KEYS = ['moisture', 'cloudBase', 'inversion', 'temperature', 'windDir', 'windSpeed', 'precip'];
 
 export class Engine {
-  constructor(canvas, qualityName = 'high') {
+  constructor(canvas, qualityName = 'high', hooks = {}) {
     this.canvas = canvas;
+    this.hooks = hooks;                         // game hooks: terrain(height, n) may reshape the heightmap
+    this.drawClouds = true;                     // false: skip the weather sim and the cloud march (night fog)
     const r = this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: false });
     r.autoClear = true;
     r.outputColorSpace = THREE.LinearSRGBColorSpace;
@@ -49,6 +52,7 @@ export class Engine {
     uni('uFrame', 0); uni('uHeightTex', null); uni('uFlowTex', null); uni('uShelterTex', null);
     uni('uSceneTex', null); uni('uDepthTex', null); uni('uCloudTex', null); uni('uCloudAux', null);
     uni('uOpaqueTex', null); uni('uOpaqueDepth', null); uni('uResolution', this.size);
+    uni('uCloudOn', 1); uni('uRoadMask', null); uni('uRoadMaskRect', new THREE.Vector4(0, 0, 0, 0));
 
     this.setSeed(this.dials.seed, true);
     this.atmos = new Atmosphere(r, ...this.quality.sim);
@@ -58,6 +62,8 @@ export class Engine {
     this.water = new Water(r);
     this.clouds = new Clouds(r);
     this.post = new Post(r);
+    this.nearFog = new NearFog();
+    this.post.nearFog = this.nearFog;
     this.scene = new THREE.Scene();
     this.scene.add(this.land.group, this.trees.mesh);
     this.overlay = new THREE.Scene();          // helper lines (camera path preview)
@@ -71,6 +77,7 @@ export class Engine {
     const n = 1024;
     this.heightN = n;
     this.height = generateHeightmap(seed, n);
+    if (this.hooks.terrain) this.hooks.terrain(this.height, n);
     const texels = buildTerrainTexels(this.height, n);
     const flow = solveFlow(this.height, n, 128);
     const mk = (data, size, old) => {
@@ -222,11 +229,12 @@ export class Engine {
     this.skyTime += dt; uni('uSkyTime').value = this.skyTime;
     uni('uFrame').value = this.frameIndex % 1024;
 
-    this.atmos.step(opts.freeze ? 0 : dt * this.dials.weatherSpeed, this.env, !!(opts.freeze || opts.exact || this.exactSim || this.frameIndex < 4));
+    uni('uCloudOn').value = this.drawClouds ? 1 : 0;
+    if (this.drawClouds) this.atmos.step(opts.freeze ? 0 : dt * this.dials.weatherSpeed, this.env, !!(opts.freeze || opts.exact || this.exactSim || this.frameIndex < 4));
     this.land.updateShadow();
 
     const ground = this.heightAt(cam.position.x, cam.position.z);
-    cam.near = Math.max(0.6, Math.min(25, (cam.position.y - ground) * 0.2));
+    cam.near = this.fixedNear || Math.max(0.3, Math.min(25, (cam.position.y - ground) * 0.2));   // fixedNear: set by the game, whose camera sits inside a cab
     cam.far = 220000; cam.fov = this.dials.fov;
     cam.updateProjectionMatrix(); cam.updateMatrixWorld(true);
     this.viewProj.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
@@ -247,11 +255,11 @@ export class Engine {
     if (this.showOverlay && this.overlay.children.length) { r.autoClear = false; r.setRenderTarget(this.mergedRT); r.render(this.overlay, cam); r.autoClear = true; }
     uni('uSceneTex').value = this.mergedRT.texture; uni('uDepthTex').value = this.mergedRT.depthTexture;
 
-    this.clouds.render(q);
+    if (this.drawClouds) this.clouds.render(q);
     const d = this.dials;
-    const ex0 = 0.62 * L.autoExposure;
+    const ex0 = 0.62 * L.autoExposure * (this.exposureGain || 1);
     this.post.render(this.clouds.res, {
-      exposure: ex0 * Math.pow(2, d.exposure), exposure0: ex0, key: 0.2 - 0.12 * L.night,
+      exposure: ex0 * Math.pow(2, d.exposure), exposure0: ex0, key: (0.2 - 0.12 * L.night) * (this.meterKey || 1),
       adaptRate: dt > 0 ? 1 - Math.exp(-dt * 1.4) : 0.5,
       contrast: d.contrast, saturation: d.saturation, warmth: d.warmth,
     }, opts.target || null);
