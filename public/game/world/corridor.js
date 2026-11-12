@@ -8,7 +8,7 @@ import { Kit, tf, rand } from './kit.js';
 const D_LIST = [0.5, 1.0, 1.5, 2.0, 2.6, 3.4, 4.6, 6.2, 8.5, 11.5, 15.5, 21, 28, 37, 48, 60, 72];
 const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-export function buildGround(route) {
+export function buildGround(route, textures = null) {
   const nS = route.n, ds = route.ds, hw = route.halfWidth, nD = D_LIST.length;
   const inner = [];                                     // [side, t]: left apron, lane, right apron
   for (let k = 0; k < 3; k++) inner.push([-1, k / 3]);
@@ -60,7 +60,7 @@ export function buildGround(route) {
   g.setAttribute('aRoad', new THREE.BufferAttribute(aRoad, 4));
   const matAttr = new THREE.BufferAttribute(aMat, 4); g.setAttribute('aMat', matAttr);
   g.setIndex(new THREE.BufferAttribute(idx, 1));
-  const material = groundMaterial(hw); material.side = THREE.DoubleSide;
+  const material = groundMaterial(hw, textures); material.side = THREE.DoubleSide;
   const mesh = new THREE.Mesh(g, material); mesh.frustumCulled = false;
   // types: one of 'sound' | 'mud' | 'rock' per pullout, in road order
   const setSurfaces = (types) => {

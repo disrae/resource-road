@@ -3,22 +3,25 @@
 // and the reporting seam (report.js). All timing is driven by the frame's dt, so a whole run can be
 // stepped without a clock (see window.__game.advance, used by the automated playthroughs).
 //
-// Link options:  ?s=CODE session code   ?q=low|medium|high graphics   ?mute=1   ?voice=0
+// Link options:  ?s=CODE session code   ?q=light|balanced|high|film graphics level for everyone   ?mute=1   ?voice=0
 //                ?debug=1 (log events, show numbers)   ?auto=good|mud|rock|late|nearmiss|wrongcalls|careless
 //                ?speed=N (time multiplier, for testing)   ?manual=1 (no frame loop: step with __game.advance)
 import * as THREE from '../vendor/three.module.min.js';
 import { SCENARIO } from './scenario.js';
-import { createWorld, TIERS } from './world/world.js';
+import { createWorld, LEVELS, levelName } from './world/world.js';
+import { loadGroundTextures } from './render/textures.js';
 import { buildProps } from './world/props.js';
 import { createPickup, createLogTruck } from './world/vehicles.js';
 import { makePlan } from './rules/plan.js';
 import { createRun } from './rules/run.js';
 import { createBot, POLICIES } from './rules/bot.js';
+import { createGovernor, RUNGS } from './quality.js';
 import { createRunReporter, events, status, setDebug, onReport } from './report.js';
 import { sessionFromLink, playerId, seedFor, randomId } from './session.js';
 import { createUI, LABELS } from './ui.js';
 import { createInput } from './input.js';
 import { createAudio } from './audio.js';
+import { createFilm } from './film.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -34,24 +37,33 @@ const DEBUG = Q.get('debug') === '1';
 setDebug(DEBUG);
 document.title = S.title;
 
-// ---- which graphics tier ----------------------------------------------------------------------
-const TIER_ORDER = ['low', 'medium', 'high'];
-function guessTier() {
+// ---- which graphics level --------------------------------------------------------------------
+const LEVEL_ORDER = ['light', 'balanced', 'high'];        // the levels meant for play, lightest first
+function guessLevel() {
   try {
-    const gl = document.createElement('canvas').getContext('webgl2'); if (!gl) return 'low';
+    const gl = document.createElement('canvas').getContext('webgl2'); if (!gl) return 'light';
     const ext = gl.getExtension('WEBGL_debug_renderer_info');
     const r = String((ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) || '');
     const lose = gl.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext();
-    if (/swiftshader|llvmpipe|software|basic render/i.test(r)) return 'low';
+    if (/swiftshader|llvmpipe|software|basic render/i.test(r)) return 'light';
     if (/apple m\d+ (pro|max|ultra)|rtx|radeon rx|gtx (1[06]|9[78])/i.test(r)) return 'high';
-    if (/apple m\d|apple gpu|geforce|radeon pro|arc\b/i.test(r)) return 'medium';
-    if (/intel|uhd|iris|mali|adreno|powervr|radeon|amd/i.test(r)) return 'low';
-    return 'medium';
-  } catch (e) { return 'low'; }
+    if (/apple m\d|apple gpu|geforce|radeon pro|arc\b/i.test(r)) return 'balanced';
+    if (/intel|uhd|iris|mali|adreno|powervr|radeon|amd/i.test(r)) return 'light';
+    return 'balanced';
+  } catch (e) { return 'light'; }
 }
-const forcedTier = TIERS[Q.get('q')] ? Q.get('q') : null, savedTier = TIERS[store.get('rr.tier')] ? store.get('rr.tier') : null;
-const tierName = forcedTier || savedTier || guessTier();
-const tierChosenByPlayer = !!forcedTier || store.get('rr.tierBy') === 'player';
+// Graphics are automatic unless the link pins a level for everyone (?q=light|balanced|high|film) or
+// the player picks one on the title screen (G). Automatic: a starting level is guessed from the
+// graphics chip (that decides which images are downloaded), then the controller in quality.js keeps
+// adjusting all the way through the run. A pinned or picked level never goes above its own
+// starting quality, but still steps down if the frame rate becomes unplayable. Film never adapts.
+// ?tier=LEVEL starts on that level and stays automatic (for testing the controller).
+const linkLevel = levelName(Q.get('q')), startLevel = levelName(Q.get('tier'));
+const pickedLevel = linkLevel || startLevel ? null : levelName(store.get('rr.gfx'));
+const AUTO = !linkLevel && !pickedLevel;
+const tierName = linkLevel || startLevel || pickedLevel || levelName(store.get('rr.autoTier')) || guessLevel();
+const LEVEL = LEVELS[tierName];
+const GFX_ORDER = ['auto', 'high', 'balanced', 'light'];
 
 // ---- boot ---------------------------------------------------------------------------------------
 const canvas = document.getElementById('view'), uiRoot = document.getElementById('ui');
@@ -61,10 +73,15 @@ const session = sessionFromLink(location.search, location.hash), pid = playerId(
 const audio = createAudio({ muted: Q.get('mute') === '1' || store.get('rr.mute') === '1', voice: Q.get('voice') !== '0' });
 const dbg = document.createElement('pre'); dbg.className = 'dbg'; if (DEBUG) document.body.append(dbg);
 
-await new Promise((r) => setTimeout(r, 40));          // let the loading screen paint before the heavy build
+const paint = () => new Promise((r) => setTimeout(r, 40));     // lets the loading screen draw before heavy work
+ui.setLoading(0.04, LABELS.loadingGround);
+await paint();
+const textures = Q.get('tex') === '0' ? null : await loadGroundTextures(LEVEL.tex, (done, n) => ui.setLoading(0.04 + 0.66 * done / n, LABELS.loadingGround), LEVEL.aniso);
+ui.setLoading(0.72, LABELS.loading);
+await paint();
 let world, pickup, truck, props;
 try {
-  world = createWorld(canvas, tierName, S);
+  world = createWorld(canvas, tierName, S, Q.get('cond'), textures);
   props = buildProps(world); pickup = createPickup(world); truck = createLogTruck(world);
 } catch (e) {
   console.error(e);
@@ -83,14 +100,16 @@ const G = {
   clock: 0, trans: null, nextCard: null, cardAt: 0, uiHold: false, paused: false,
   view: store.get('rr.view') === 'chase' ? 'chase' : 'cab',
   lookYaw: 0, lean: 0, dive: 0, sink: 0, prevV: 0, spinExtra: 0, truckSpin: 0, truckTrail: -0.15,
-  radioQ: [], radioAt: 0, autoAt: 0, manual: Q.get('manual') === '1', speed: clamp(Number(Q.get('speed')) || 1, 0.1, 20),
+  radioQ: [], radioAt: 0, autoAt: 0, botName: Q.get('auto'), manual: Q.get('manual') === '1', speed: clamp(Number(Q.get('speed')) || 1, 0.1, 20),
   input: { throttle: 0, brake: 0, steer: 0 },
 };
-const perf = { ms: 16, t: 0, ceiling: 1, lastUp: -99, title: [], real: 0 };
+const perf = { ms: 16, slowTitle: 0 };
+const gov = createGovernor({ start: LEVEL.rung, best: AUTO ? 0 : LEVEL.rung });
+if (LEVEL.offline) gov.lock(LEVEL.rung);
 
 function resize() { world.resize(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1); }
 window.addEventListener('resize', resize);
-engine.autoScale = 1; resize();
+resize();
 
 // ---- cameras --------------------------------------------------------------------------------------
 // Walk-around stations, in the pickup's own space (+X forward, +Y up, +Z right). `radio` is set from
@@ -149,9 +168,9 @@ function newRun() {
   G.run = createRun(S, G.plan, road);
   G.reporter = createRunReporter({ session, playerId: pid, runId: 'r_' + randomId(10) });
   G.reporter.start({ scenarioId: S.id, seed, tier: tierName, plan: { faults: G.plan.faults, surfaces: G.plan.surfaces } });
-  G.bot = POLICIES[Q.get('auto')] ? createBot(Q.get('auto'), road) : null;
+  G.bot = POLICIES[G.botName] ? createBot(G.botName, road) : null;
   world.setSurfaces(G.plan.surfaces);
-  if (world.env !== 'dusk') world.setEnv('dusk');
+  if (world.env !== 'stage') world.setEnv('stage');
   Object.assign(G, { summary: null, trans: null, nextCard: null, uiHold: false, paused: false, lookYaw: 0, lean: 0, dive: 0, sink: 0, prevV: 0, spinExtra: 0, radioQ: [], truckTrail: -0.15 });
   ui.closeCard(); ui.setFade(0); ui.setInter(''); ui.setHud({ show: false });
 }
@@ -161,11 +180,11 @@ function begin() {
   rigGo('intro', 1.3); pump();
 }
 function queueCard(p) {
-  const delay = p.kind === 'inspect' ? 0.95 : p.kind === 'heard' ? 0.9 : p.kind === 'debrief' ? 0.6 : 0.2;
+  const delay = G.film ? 0 : p.kind === 'inspect' ? 1.4 : p.kind === 'heard' ? 0.9 : p.kind === 'debrief' ? 0.6 : 0.2;
   G.nextCard = { p, at: G.clock + delay };
   if (p.kind === 'inspect') rigGo(p.view, 1.25);
 }
-function showCard(p) { ui.showCard(p); input.clear(); G.cardAt = G.clock; G.autoAt = G.clock + (Number(Q.get('autodelay')) || 1.3); }
+function showCard(p) { ui.showCard(p); input.clear(); G.cardAt = G.clock; G.autoAt = G.clock + (G.film ? 0 : Number(Q.get('autodelay')) || 1.3); }
 function handle(ev) {
   const st = G.run.state;
   if (ev.type === 'decision') G.reporter.decision(ev);
@@ -200,11 +219,12 @@ function openPause() {
 }
 function showTitle() {
   G.scene = 'title'; rig.name = null; rigGo('title', 0);
-  ui.showTitle({ session, tierLabel: TIERS[tierName].label }, (what) => {
+  ui.showTitle({ session, tierLabel: AUTO ? LABELS.auto : LEVEL.label, pinned: !!linkLevel }, (what) => {
     if (what === 'enter') begin();
-    else if (what === 'graphics') {
-      const next = TIER_ORDER[(TIER_ORDER.indexOf(tierName) + 1) % TIER_ORDER.length];
-      if (store.set('rr.tier', next)) { store.set('rr.tierBy', 'player'); const u = new URL(location.href); u.searchParams.delete('q'); location.replace(u); }
+    else if (what === 'graphics' && !linkLevel) {
+      // the player's own choice; a level pinned by the meeting link cannot be changed here
+      const next = GFX_ORDER[(GFX_ORDER.indexOf(AUTO ? 'auto' : tierName) + 1) % GFX_ORDER.length];
+      if (store.set('rr.gfx', next)) { const u = new URL(location.href); u.searchParams.delete('tier'); location.replace(u); }
     }
   });
 }
@@ -233,7 +253,7 @@ function updateTrans(dt) {
     // fade out on the dusk view, a line of text, fade in on the road in the dark
     if (T.t < 1.0) ui.setFade(T.t / 1.0);
     else {
-      if (!T.switched) { T.switched = true; world.setEnv('night'); ui.setFade(1); }
+      if (!T.switched) { T.switched = true; world.setEnv('drive'); ui.setFade(1); }
       const a = Math.min(smooth(1.0, 1.5, T.t), 1 - smooth(3.4, 3.9, T.t));
       ui.setInter(T.t < 3.9 ? TX.later : '', a);
       if (T.t > 3.9) ui.setFade(1 - smooth(3.9, 5.2, T.t));
@@ -245,7 +265,7 @@ function updateTrans(dt) {
     if (T.t < 1.2) ui.setFade(smooth(0.2, 1.2, T.t));
     else {
       if (!T.switched) {
-        T.switched = true; G.scene = 'summary'; world.setEnv('dusk'); rig.name = null; rigGo('title', 0); ui.setHud({ show: false }); audio.quiet();
+        T.switched = true; G.scene = 'summary'; world.setEnv('stage'); rig.name = null; rigGo('title', 0); ui.setHud({ show: false }); audio.quiet();
         ui.showSummary(G.summary, { session }, (what) => { if (what === 'enter') begin(); });
       }
       ui.setFade(1 - smooth(1.4, 2.4, T.t)); if (T.t >= 2.4) { ui.setFade(0); G.trans = null; }
@@ -269,7 +289,7 @@ function stepRun(dt) {
 }
 
 function placeVehicles(dt) {
-  const inRun = G.scene === 'run', st = inRun ? G.run.state : null, c = st ? st.car : START, night = world.env === 'night';
+  const inRun = G.scene === 'run', st = inRun ? G.run.state : null, c = st ? st.car : START, night = world.env === 'drive';
   const drivePhase = !!st && (st.phase === 'drive' || st.phase === 'done') && night;
   // body movement: dive under braking, lean in corners, a little shake from the gravel
   const acc = dt > 0 ? (c.v - G.prevV) / dt : 0; G.prevV = c.v;
@@ -285,11 +305,11 @@ function placeVehicles(dt) {
   pickup.faults.lights = faultNow('inspect.lights');
   pickup.faults.tires = faultNow('inspect.tires') || !!(st && st.damaged);
   pickup.faults.load = faultNow('inspect.load');
-  const cab = drivePhase && G.view === 'cab';
+  const cab = drivePhase && G.view === 'cab' && !G.shot;
   world.lightsOff();
   pickup.place({ s: c.s, u: c.u, yaw: c.yaw, steer: c.steer, spin: (c.spin || 0) + G.spinExtra, lean: G.lean + bumpL, dive: G.dive + bumpD, sink: G.sink,
     brake: G.input.brake > 0 && c.v > 0.2, view: cab ? 'cab' : null }, true);
-  pickup.radioLamp.material.uniforms.uPower.value = drivePhase ? (ui.capT ? 6 : 1.2) : 0;
+  pickup.radioLamp.material.uniforms.uPower.value = drivePhase ? (ui.capT ? 1.1 : 0.22) : 0;
 
   // the logging truck
   const tr = st ? st.truck : null; let gap = null;
@@ -303,18 +323,20 @@ function placeVehicles(dt) {
   // camera
   if (drivePhase) {
     const enc = st.enc;
-    let yawT = clamp(bendAhead(c.s, 22) * 0.55, -0.3, 0.3) + (c.steer || 0) * 0.25 - c.yaw * 0.35, pitchT = -0.035;
-    if (tr && tr.active && (enc === 'waiting' || enc === 'squeeze' || enc === 'passed' || enc === 'after')) {
-      yawT = clamp(Math.atan2(tr.u - c.u, tr.s + 2 - c.s) - c.yaw, -1.75, 0.5); pitchT = 0.0;
+    let yawT = clamp(bendAhead(c.s, 22) * 0.55, -0.3, 0.3) + (c.steer || 0) * 0.25 - c.yaw * 0.35, pitchT = 0.04;
+    // stopped for the truck: watch it come and go by, then look ahead again
+    if (tr && tr.active && tr.s - c.s > -7 && (enc === 'waiting' || enc === 'squeeze' || enc === 'passed' || enc === 'after')) {
+      yawT = clamp(Math.atan2(tr.u - c.u, Math.max(1.5, tr.s + 2 - c.s)) - c.yaw, -1.3, 0.5); pitchT = 0.04;
     }
     G.lookYaw += (yawT - G.lookYaw) * Math.min(1, dt * 3.2);
-    if (G.view === 'cab') { pickup.cabCamera(cam, G.lookYaw, pitchT); engine.setDial('fov', 64); }
+    if (G.view === 'cab') { pickup.cabCamera(cam, G.lookYaw, pitchT); engine.setDial('fov', 62); }
     else {
       pickup.point(-8.2, 3.5, 0, _a); pickup.point(7 + Math.cos(G.lookYaw) * 3, 1.0, Math.sin(G.lookYaw) * 6, _b);
       const k = G.chaseInit ? Math.min(1, dt * 7) : 1; G.chaseInit = true;
       cam.position.lerp(_a, k); cam.up.set(0, 1, 0); cam.lookAt(_b); engine.setDial('fov', 58);
     }
   } else { G.chaseInit = false; rigUpdate(dt); }
+  if (G.shot) G.shot(dt);                   // a camera placed by hand: film.js and the dev stills
 
   audio.drive({ on: drivePhase && !G.trans && !G.paused, speed: c.v, throttle: G.input.throttle, off: c.off, spin: spinning, truck: gap });
   return gap;
@@ -328,11 +350,11 @@ function tick(dt, render = true) {
   if (G.scene === 'run') stepRun(dt);
   const gap = placeVehicles(dt);
   if (G.scene === 'run') {
-    const st = G.run.state, show = st.phase === 'drive' && world.env === 'night';
+    const st = G.run.state, show = st.phase === 'drive' && world.env === 'drive';
     ui.setHud({ show, kmh: Math.abs(st.car.v) * 3.6, channel: st.radio.working ? R.channel : R.wrongChannel, radioOk: st.radio.working, prompt: st.canWait && driving() ? TX.waitPrompt : null });
   }
   // hands-off play (?auto=policy)
-  if (POLICIES[Q.get('auto')] || G.bot) {
+  if (POLICIES[G.botName] || G.bot) {
     if (G.scene === 'title' && G.clock > 1.2 && ui.screenKind === 'title') begin();
     else if (ui.card && G.clock >= G.autoAt) {
       const p = ui.card; ui.choose(p.kind === 'feedback' ? 'next' : p.kind === 'pause' ? 'resume' : G.bot ? G.bot.answer(G.run) : null);
@@ -340,28 +362,43 @@ function tick(dt, render = true) {
   }
   if (DEBUG) {
     const st = G.run && G.run.state;
-    dbg.textContent = `${tierName} ${engine.size.x}x${engine.size.y} ${perf.ms.toFixed(1)} ms` + (st ? `\ns ${st.car.s.toFixed(0)} u ${st.car.u.toFixed(1)} v ${(st.car.v * 3.6).toFixed(0)} ${st.phase}/${st.enc}` + (gap != null ? ` gap ${gap.toFixed(0)}` : '') : '');
+    dbg.textContent = `${AUTO ? 'auto' : linkLevel ? 'link' : 'picked'} ${tierName} rung ${gov.rung} ${engine.size.x}x${engine.size.y} ${perf.ms.toFixed(1)} ms` + (st ? `\ns ${st.car.s.toFixed(0)} u ${st.car.u.toFixed(1)} v ${(st.car.v * 3.6).toFixed(0)} ${st.phase}/${st.enc}` + (gap != null ? ` gap ${gap.toFixed(0)}` : '') : '');
   }
   if (render) world.frame(Math.min(dt, 0.05));
 }
 
 // ---- frame loop, resolution scaling, automatic tier ------------------------------------------------------
 function monitor(real) {
-  if (real > 0.25 || document.hidden) return;
-  perf.ms += (real * 1000 - perf.ms) * 0.06; perf.t += real; perf.real += real;
-  // too slow on the title screen: drop a whole tier once (unless the player chose the tier)
-  if (G.scene === 'title' && !tierChosenByPlayer && tierName !== 'low' && perf.title) {
-    perf.title.push(real * 1000);
-    if (perf.title.length >= 70) {
-      const med = perf.title.slice(20).sort((a, b) => a - b)[25]; perf.title = null;
-      if (med > 36) { const next = TIER_ORDER[TIER_ORDER.indexOf(tierName) - 1]; if (store.set('rr.tier', next)) { location.reload(); return; } }
-    }
+  if (document.hidden) return;
+  const ms = real * 1000;
+  if (ms < 400) perf.ms += (ms - perf.ms) * 0.06;
+  const r = gov.sample(ms);
+  if (r >= 0) world.setRung(r);
+  // last resort, on the title screen only (never during play): already on the bottom rung and still
+  // very slow, so reload once on the next lighter level (less terrain detail, smaller images)
+  if (AUTO && G.scene === 'title' && tierName !== 'light' && gov.rung === RUNGS.length - 1) {
+    perf.slowTitle = gov.ms > 45 ? perf.slowTitle + real : 0;
+    if (perf.slowTitle > 3 && store.set('rr.autoTier', LEVEL_ORDER[LEVEL_ORDER.indexOf(tierName) - 1])) location.reload();
   }
-  if (perf.t < 2.5) return;
-  perf.t = 0;
-  const sc = engine.autoScale || 1;
-  if (perf.ms > 27 && sc > 0.56) { engine.autoScale = Math.max(0.55, sc * 0.85); if (perf.real - perf.lastUp < 8) perf.ceiling = engine.autoScale; resize(); }
-  else if (perf.ms < 18.5 && sc < perf.ceiling - 0.01) { engine.autoScale = Math.min(perf.ceiling, sc * 1.12); perf.lastUp = perf.real; resize(); }
+}
+// The same measuring and adapting without the browser's frame clock, for automation and hidden
+// tabs: every frame is drawn, the graphics chip is made to finish, and the real time it took is
+// fed to the controller. `load` draws the scene extra times per frame to pretend the machine is slower.
+function selfTimed(seconds, o = {}) {
+  const gl = engine.renderer.getContext(), px = new Uint8Array(4), seen = [], steps = []; let t = 0, pending = null;
+  while (t < seconds) {
+    const t0 = performance.now();
+    tick(1 / 60, true); for (let i = 0; i < (o.load | 0); i++) world.frame(0);
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    let ms = performance.now() - t0; seen.push(ms);
+    // the cost of a quality step: the frame before it, the step itself, the first frame after it
+    if (pending) { pending.after = +ms.toFixed(1); steps.push(pending); pending = null; }
+    if (o.vsync !== false) ms = Math.ceil(ms / 16.667) * 16.667;       // what a 60 Hz screen would show
+    t += ms / 1000; const r = gov.sample(ms);
+    if (r >= 0) { const t1 = performance.now(); world.setRung(r); pending = { rung: r, before: +seen[seen.length - 1].toFixed(1), step: +(performance.now() - t1).toFixed(2) }; }
+  }
+  const tail = seen.slice(-40).sort((a, b) => a - b);
+  return { rung: gov.rung, ms: +tail[tail.length >> 1].toFixed(1), frames: seen.length, width: engine.size.x, height: engine.size.y, fogSteps: world.fogSteps, steps };
 }
 let last = performance.now();
 function loop(t) {
@@ -378,7 +415,7 @@ function loop(t) {
 async function snap(name, o = {}) {
   const W = o.w || 1280, sc = W / window.innerWidth, H = Math.round(window.innerHeight * sc);
   world.resize(window.innerWidth, window.innerHeight, 1, [W, H]);
-  tick(0, true);
+  for (let i = 0; i < (o.settle ?? 4); i++) tick(0, true);          // a few frames so the picture settles at the new size
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
   g.drawImage(canvas, 0, 0, W, H);
   resize();
@@ -400,12 +437,13 @@ function bench(n = 40) {
   const gl = engine.renderer.getContext(), t = performance.now();
   for (let i = 0; i < n; i++) world.frame(1 / 60);
   gl.finish(); const px = new Uint8Array(4); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-  return { tier: tierName, ms: +((performance.now() - t) / n).toFixed(2), width: engine.size.x, height: engine.size.y, env: world.env };
+  return { tier: tierName, rung: world.rung, ms: +((performance.now() - t) / n).toFixed(2), width: engine.size.x, height: engine.size.y, env: world.env, condition: world.condition.name };
 }
 window.__game = {
-  events, status, onReport, scenario: S, world, ui, G, pickup, truck, tier: tierName, session, playerId: pid,
+  events, status, onReport, scenario: S, world, ui, G, pickup, truck, tier: tierName, level: tierName, session, playerId: pid,
   get run() { return G.run; }, get state() { return G.run ? G.run.state : null; }, get scene() { return G.scene; },
-  begin, tick, snap, bench,
+  begin, tick, snap, bench, selfTimed, gov, auto: AUTO,
+  setRung(i) { gov.lock(i); world.setRung(i); }, autoGraphics() { gov.unlock(); },
   // step the whole game forward without a clock: advance(12) plays 12 seconds
   advance(seconds, o = {}) {
     const step = o.step || 1 / 30, n = Math.ceil(seconds / step), every = o.renderEvery || 8;
@@ -413,9 +451,21 @@ window.__game = {
     return seconds;
   },
   setManual(on) { G.manual = !!on; },
-  setBot(name) { G.bot = name ? createBot(name, road) : null; },
+  setBot(name) { G.botName = name || null; G.bot = name && G.run ? createBot(name, road) : null; },
+  // a camera placed by hand, in road coordinates: setShot([s, u, height], [s, u, height], fov); setShot() hands it back
+  setShot(from, to, fov = 50) {
+    G.shot = from ? () => { const a = route.toWorld(from[0], from[1]), b = route.toWorld(to[0], to[1]); cam.position.set(a[0], a[1] + from[2], a[2]); cam.up.set(0, 1, 0); cam.lookAt(b[0], b[1] + to[2], b[2]); engine.setDial('fov', fov); } : null;
+  },
   key(k) { window.dispatchEvent(new KeyboardEvent('keydown', { key: k })); },
 };
+
+window.__game.film = createFilm({ world, G, ui, tick, begin, resize, setBot: (n) => window.__game.setBot(n), scene: () => G.scene, state: () => (G.run ? G.run.state : null) });
+
+// Draw one frame of the drive with both vehicles in view while the loading screen is still up, so
+// every shader is compiled now and nothing stalls later when the night falls or the truck appears.
+world.setEnv('drive'); pickup.place({ ...START }, true); truck.place({ s: START.s + 30, u: 0, uTrail: 0, spin: 0 }, true);
+world.view(START.s - 12, 0, 2, 0, 0); world.frame(0); pickup.place({ ...START, view: 'cab' }, true); world.frame(0);
+truck.place({ hidden: true }, false); world.setEnv('stage');
 
 // first picture: the staging area at dusk
 pickup.place({ ...START }, true); setRadioStation();

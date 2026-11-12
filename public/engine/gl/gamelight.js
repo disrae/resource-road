@@ -16,7 +16,9 @@ uni('uFogParams', new THREE.Vector4(0, 400, 30, 0.6));   // extinction per metre
 uni('uFillPos', new THREE.Vector4(0, 0, 0, 1));          // soft fill light scattered back by the fog: xyz, w radius
 uni('uFillCol', new THREE.Vector3(0, 0, 0));
 
-export const GAMELIGHT_UNIFORMS = ['uSpotPos', 'uSpotDir', 'uSpotCol', 'uPointPos', 'uPointCol', 'uFogParams', 'uFillPos', 'uFillCol'];
+uni('uSnowCover', 0);                                    // snow lying on the ground and on things, 0..1
+
+export const GAMELIGHT_UNIFORMS = ['uSpotPos', 'uSpotDir', 'uSpotCol', 'uPointPos', 'uPointCol', 'uFogParams', 'uFillPos', 'uFillCol', 'uSnowCover'];
 
 export const GLSL_GAMELIGHT = /* glsl */`
 #define N_SPOT ${N_SPOT}
@@ -29,16 +31,17 @@ uniform vec3 uPointCol[N_POINT];
 uniform vec4 uFogParams;
 uniform vec4 uFillPos;
 uniform vec3 uFillCol;
+uniform float uSnowCover;
 // Beam profile of a dipped headlamp. The lamp axis is aimed 0.045 (tangent) below a cut-off line;
-// under the line the beam gets stronger toward it, so the road is lit fairly evenly from near to
-// far, and above it only a little spill escapes up into the fog in front of the driver's eyes.
+// under the line the beam gets much stronger toward it (a hot band just under the cut-off), so the
+// road is lit from the bumper out to about 60 m, and above it only a little spill escapes up into the fog in front of the driver's eyes.
 float spotCone(vec3 l, vec4 dir) {
   vec3 d = dir.xyz; float z = dot(l, d);
   if (z <= 0.05) return 0.0;
   vec3 rt = normalize(vec3(-d.z, 0.0, d.x)), up = cross(rt, d);
   float W = sqrt(max(1.0 - dir.w * dir.w, 1e-4)) / dir.w;          // tangent of the half-angle
   float az = dot(l, rt) / z / W, tb = 0.045 - dot(l, up) / z;      // tb: tangent below the cut-off
-  float v = pow(0.045 / max(tb, 0.036), 1.6);
+  float v = pow(0.045 / max(tb, 0.018), 1.6);
   v *= 1.0 - smoothstep(W * 0.7, W * 1.5, tb);                     // bottom of the beam
   v *= mix(0.07, 1.0, smoothstep(-0.07, 0.02, tb));                // the cut-off
   v *= 1.0 - smoothstep(W * 0.4, W * 1.0, -tb);                    // top of the spill

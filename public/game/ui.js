@@ -4,13 +4,13 @@
 import { icon } from './icons.js';
 
 export const LABELS = {
-  start: 'Start', pressEnter: 'Press Enter', loading: 'Building the road',
+  start: 'Start', pressEnter: 'Press Enter', loading: 'Building the road', loadingGround: 'Loading the ground', pinned: 'set by the meeting link',
   walk: 'Walk-around', of: 'of', send: 'Send', cancel: 'Cancel', kilometre: 'Kilometre', direction: 'Direction',
   up: 'Up', down: 'Down', callTip: 'Keys: 0 to 3 for the kilometre, up or down arrow for the direction, Enter to send, Esc to cancel.',
   heard: 'On the radio', you: 'You', gauge: 'Gauge', placard: 'Door placard', yourRadio: 'Your radio is on', signSays: 'Read the sign at the road entrance',
   whatWorks: 'What works', also: 'Also', safeOf: 'safe decisions', again: 'Play again', session: 'Session', solo: 'Practice run (no session code)',
   missed: 'Missed on the walk-around', remember: 'Take away', right: 'Right.', notQuite: 'Not quite.',
-  paused: 'Paused', resume: 'Resume', restart: 'Start again', graphics: 'Graphics', sound: 'Sound', on: 'on', off: 'off',
+  paused: 'Paused', resume: 'Resume', restart: 'Start again', graphics: 'Graphics', auto: 'Automatic', sound: 'Sound', on: 'on', off: 'off',
   keys: [['Arrow keys or W A S D', 'Drive'], ['R', 'Radio'], ['C', 'Change view'], ['Enter', 'Choose'], ['M', 'Sound'], ['Esc', 'Pause']],
   hint: 'R radio   C view   Esc pause',
 };
@@ -167,11 +167,18 @@ export function createUI(root, scenario) {
     ui.screenKind = 'title'; ui.onScreen = on; ui.locked = ui.time + 0.3;
     screen.className = 'screen title show'; screen.innerHTML = '';
     const go = h('button', 'opt sel big', [h('kbd', null, 'Enter'), h('span', null, LABELS.start)]); go.tabIndex = -1; go.addEventListener('click', () => on('enter'));
-    const gfx = h('button', 'link', `${LABELS.graphics}: ${info.tierLabel}  (G)`); gfx.tabIndex = -1; gfx.addEventListener('click', () => on('graphics'));
+    const gfx = h('button', 'link', `${LABELS.graphics}: ${info.tierLabel}  (${info.pinned ? LABELS.pinned : 'G'})`); gfx.tabIndex = -1; gfx.addEventListener('click', () => on('graphics'));
     screen.append(h('div', 'title-box', [h('h1', null, S.title), h('p', 'sub', S.subtitle), go, keyTable(),
       h('p', 'small', [info.session ? `${LABELS.session} ${info.session}` : LABELS.solo, '   ', gfx])]));
   }
-  function showLoading() { ui.screenKind = 'loading'; screen.className = 'screen loading show'; screen.innerHTML = ''; screen.append(h('div', 'title-box', [h('h1', null, S.title), h('p', 'sub', LABELS.loading)])); }
+  // loading screen with a progress bar: setLoading(0..1, text)
+  let loadBar = null, loadText = null;
+  function showLoading() {
+    ui.screenKind = 'loading'; screen.className = 'screen loading show'; screen.innerHTML = '';
+    loadBar = h('div', 'fill'); loadText = h('p', 'sub', LABELS.loading);
+    screen.append(h('div', 'title-box', [h('h1', null, S.title), loadText, h('div', 'bar', [loadBar])]));
+  }
+  function setLoading(frac, text) { if (loadBar) loadBar.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`; if (loadText && text) loadText.textContent = text; }
   function showSummary(sum, info, on) {
     ui.screenKind = 'summary'; ui.onScreen = on; ui.locked = ui.time + 1.0;
     screen.className = 'screen summary show'; screen.innerHTML = '';
@@ -190,6 +197,6 @@ export function createUI(root, scenario) {
   }
   function hideScreen() { ui.screenKind = null; ui.onScreen = null; screen.className = 'screen'; screen.innerHTML = ''; }
 
-  return Object.assign(ui, { showCard, closeCard, key, toast, radioSay, setHud, tick, setFade, setInter, showTitle, showLoading, showSummary, hideScreen, root,
+  return Object.assign(ui, { showCard, closeCard, key, toast, radioSay, setHud, tick, setFade, setInter, showTitle, showLoading, setLoading, showSummary, hideScreen, root,
     choose(choice) { answer(choice); }, options: () => opts.map((o) => o.id) });
 }

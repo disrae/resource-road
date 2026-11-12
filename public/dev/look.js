@@ -20,7 +20,7 @@ console.log('world built in', Math.round(performance.now() - t0), 'ms');
 const state = { s: 60, u: 0, h: 1.5, yaw: 0, pitch: -0.03, env: 'night', lights: true, pickup: null, truck: null, cam: null };
 function apply(o = {}) {
   Object.assign(state, { pickup: null, truck: null, cab: false }, o);
-  if (o.env) world.setEnv(state.env);
+  if (o.env) world.setEnv(state.env === 'night' || state.env === 'drive' ? 'drive' : 'stage');
   if (o.dials) world.engine.setDials(o.dials);
   if (o.vis != null) world.setFog(o.vis);                       // fog visibility in metres, 0 = no fog
   if (o.over) { const w = world.route.toWorld(o.over[0], o.over[1] || 0); state.cam = [w[0], w[1] + o.over[2], w[2], 0, -Math.PI / 2 + 0.001]; }
@@ -28,15 +28,15 @@ function apply(o = {}) {
   if (state.cam) { const c = state.cam; world.engine.camera.position.set(c[0], c[1], c[2]); world.engine.camera.rotation.set(c[4] || 0, c[3] || 0, 0, 'YXZ'); }
   else world.view(state.s, state.u, state.h, state.yaw, state.pitch);
   world.lightsOff();
-  if (kit.pickup) kit.pickup.place(state.pickup ? { ...state.pickup } : { s: state.s, u: state.u, hidden: !state.showPickup }, state.lights && world.night);
-  else if (state.lights && world.night) {
+  if (kit.pickup) kit.pickup.place(state.pickup ? { ...state.pickup } : { s: state.s, u: state.u, hidden: !state.showPickup }, state.lights && (world.env === 'drive'));
+  else if (state.lights && (world.env === 'drive')) {
     const f = world.route.frame(state.s), w = world.route.toWorld(state.s, state.u), dir = [f.tx, -0.07 - f.grade * -1, f.tz];
     world.setSpot(0, [w[0] + f.tz * 0.7, w[1] + 0.95, w[2] - f.tx * 0.7], dir, 60, 26);
     world.setSpot(1, [w[0] - f.tz * 0.7, w[1] + 0.95, w[2] + f.tx * 0.7], dir, 60, 26);
   }
   if (o.cab != null) state.cab = o.cab;
-  if (state.cab && kit.pickup) { kit.pickup.place({ s: state.s, u: state.u, view: 'cab', ...(state.pickup || {}) }, state.lights && world.night); kit.pickup.cabCamera(world.engine.camera, state.yaw, state.pitch); }
-  if (kit.truck) kit.truck.place(state.truck ? { ...state.truck } : { hidden: true }, world.night);
+  if (state.cab && kit.pickup) { kit.pickup.place({ s: state.s, u: state.u, view: 'cab', ...(state.pickup || {}) }, state.lights && (world.env === 'drive')); kit.pickup.cabCamera(world.engine.camera, state.yaw, state.pitch); }
+  if (kit.truck) kit.truck.place(state.truck ? { ...state.truck } : { hidden: true }, (world.env === 'drive'));
 }
 async function settle(n = 10) { for (let i = 0; i < n; i++) world.frame(1 / 30); }
 async function snap(name, o = {}, w = 1280, h = 720) {

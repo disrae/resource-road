@@ -49,12 +49,24 @@ export const SCENARIO = {
   },
 
   // ---- weather and light ---------------------------------------------------------------------
-  // Engine dials. `dusk` is the opening view from the staging area; `night` is the drive.
   look: {
-    season: 0.8,
-    dusk: { time: 17.25, moisture: 0.62, cloudBase: 880, inversion: 0.15, temperature: 9, windDir: 275, windSpeed: 6, precip: 0.1, highCloud: 0.45, haze: 0.32 },
-    night: { time: 20.4 },
-    fog: { visibility: 95, top: 372, topSoftness: 16 },   // metres you can see; altitude where the fog thins out
+    season: 0.8,                  // 0 = spring green ... 0.8 = late autumn colour
+    // The opening scene at the staging area. These are the Mistline engine's weather dials.
+    stage: { time: 17.25, moisture: 0.62, cloudBase: 880, inversion: 0.15, temperature: 9, windDir: 275, windSpeed: 6, precip: 0.1, highCloud: 0.45, haze: 0.32 },
+    // Weather and time of day for the drive. One of:
+    //   'nightFog'   dark and foggy (the condition this game was built for)
+    //   'nightClear' dark, no fog
+    //   'dusk'       last light, clear road
+    //   'clearDay'   sunny
+    //   'coldSnow'   cold, snow on the ground
+    //   'rain'       rain and low cloud
+    // The full list and what each one sets is in public/game/world/conditions.js.
+    condition: 'nightFog',
+    // Change any part of the chosen condition here, for example { fog: { visibility: 60 } } for
+    // thicker fog or { dials: { time: 6.5 } } for another hour. Leave empty to use it as it is.
+    conditionTweaks: {},
+    fogTop: 372,                  // altitude in metres where ground fog thins out (the road climbs from about 300 m)
+    fogTopSoftness: 16,
   },
 
   // ---- the logging truck -----------------------------------------------------------------------

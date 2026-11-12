@@ -14,7 +14,7 @@ uniform sampler2D uTex, uDepthTex;
 uniform sampler3D uNoiseTex;
 uniform mat4 uInvViewProj;
 uniform vec3 uCamPos, uFogAmb, uFogSky;
-uniform float uSkyTime, uFogSteps, uFogReach, uFrame, uFogGlow;
+uniform float uSkyTime, uFogSteps, uFogReach, uFrame, uFogGlow, uRain, uRainTime;
 in vec2 vUv; out vec4 o;
 
 float ign(vec2 p) { return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))); }
@@ -32,8 +32,21 @@ float density(vec3 p) {
   return d;
 }
 
+// falling rain: two layers of short bright streaks over the picture (they catch whatever light is behind them)
+float rainStreaks(vec2 uv) {
+  float a = 0.0;
+  for (int i = 0; i < 2; i++) {
+    float sc = i == 0 ? 70.0 : 130.0, sp = i == 0 ? 2.4 : 1.7;
+    vec2 p = vec2(uv.x * sc + uv.y * 4.0, uv.y * (i == 0 ? 1.6 : 2.4) + uRainTime * sp);
+    float c = floor(p.x), h = fract(sin(c * 91.7 + float(i) * 7.3) * 43758.5);
+    float y = fract(p.y + h * 7.0);
+    a += smoothstep(0.16, 0.0, abs(fract(p.x) - 0.5)) * smoothstep(0.72, 1.0, y) * step(0.45, h) * (i == 0 ? 1.0 : 0.6);
+  }
+  return a;
+}
 void main() {
   vec3 col = texture(uTex, vUv).rgb;
+  if (uRain > 0.0) col *= 1.0 + rainStreaks(vUv) * 0.55 * uRain;
   if (uFogParams.x <= 0.0) { o = vec4(col, 1.0); return; }
   float depth = texture(uDepthTex, vUv).r;
   vec4 wp = uInvViewProj * vec4(vUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -99,12 +112,12 @@ void main() {
 export class NearFog {
   constructor() {
     uni('uFogAmb', new THREE.Vector3()); uni('uFogSky', new THREE.Vector3());
-    uni('uFogSteps', 16); uni('uFogReach', 220); uni('uFogGlow', 0.25);   // uFogGlow: how brightly beams light the fog
+    uni('uFogSteps', 16); uni('uFogReach', 220); uni('uFogGlow', 0.25); uni('uRain', 0); uni('uRainTime', 0);   // uFogGlow: how brightly beams light the fog
     this.pass = new Pass(FRAG, {
-      ...pick(...GAMELIGHT_UNIFORMS, 'uDepthTex', 'uNoiseTex', 'uInvViewProj', 'uCamPos', 'uSkyTime', 'uFrame', 'uFogAmb', 'uFogSky', 'uFogSteps', 'uFogReach', 'uFogGlow'),
+      ...pick(...GAMELIGHT_UNIFORMS, 'uDepthTex', 'uNoiseTex', 'uInvViewProj', 'uCamPos', 'uSkyTime', 'uFrame', 'uFogAmb', 'uFogSky', 'uFogSteps', 'uFogReach', 'uFogGlow', 'uRain', 'uRainTime'),
       uTex: { value: null },
     });
   }
-  get active() { return uni('uFogParams').value.x > 0; }
-  render(renderer, src, dst) { this.pass.uniforms.uTex.value = src.texture; this.pass.render(renderer, dst); }
+  get active() { return uni('uFogParams').value.x > 0 || uni('uRain').value > 0; }
+  render(renderer, src, dst) { uni('uRainTime').value = (performance.now() / 1000) % 1000; this.pass.uniforms.uTex.value = src.texture; this.pass.render(renderer, dst); }
 }

@@ -53,8 +53,11 @@ function pickupBody() {
     for (const x of [1.85, -1.85]) k.profile(arc(x, 0.44, 0.56), 0.06, tf(0, 0, z * (hz + 0.005)), BLACK, { gloss: 0.2, bevel: 0 });   // arch flares
     k.box(0.05, 0.78, 0.05, tf(-1.1, 1.72, z * 0.86), BLACK, { gloss: 0.3 });             // cab guard uprights
     k.box(1.2, 0.1, 0.07, tf(0, 0.5, z * (hz - 0.02)), BLACK, { gloss: 0.2 });            // sill step
+    k.box(5.5, 0.16, 0.012, tf(0.02, 0.63, z * (hz + 0.003)), [0.05, 0.05, 0.055], { gloss: 0.2 });               // dark lower cladding
+    k.box(2.6, 0.07, 0.012, tf(-0.2, 0.84, z * (hz + 0.006)), [0.85, 0.22, 0.03], { gloss: 0.3, retro: 0.5 });     // high-visibility stripe on the doors
   }
   k.box(0.05, 0.05, 1.77, tf(-1.1, 2.09, 0), BLACK, { gloss: 0.3 });
+  k.box(0.16, 0.07, 0.6, tf(-0.2, 2.0, 0), [0.75, 0.33, 0.02], { gloss: 0.6 });           // amber beacon bar on the roof
   k.box(0.05, 0.05, 1.77, tf(-1.1, 1.78, 0), BLACK, { gloss: 0.3 });
   k.box(0.08, 0.5, W - 0.02, tf(-2.93, 1.09, 0), PAINT, P);                               // tailgate
   k.box(0.012, 0.09, 1.7, tf(-2.975, 0.98, 0), [0.85, 0.22, 0.03], { gloss: 0.3, retro: 0.5 });   // high-visibility strip
@@ -133,7 +136,7 @@ export function createPickup(world) {
   engine.scene.add(group);
   const pose = {}, P = {
     group, wheels, pose, faults: { lights: false, tires: false, load: false }, length: 5.9, width: 2.0,
-    headPower: 380, lampPower: 30, eye: [0.12, 1.8, -0.42], radioLamp,
+    headPower: 380, lampPower: 30, eye: [0.55, 1.88, -0.42], radioLamp,
     // p: { s, u, yaw, steer, spin, lean, dive, hidden, brake }
     place(p, lightsOn = true) {
       group.visible = !p.hidden;
@@ -161,7 +164,7 @@ export function createPickup(world) {
         tail[i].material.uniforms.uPower.value = on ? (p.brake ? 5 : 1.2) : 0.01;
       });
       // the glow of the fog ahead falls softly back on the truck
-      _v.set(4.5, 1.4, 0).applyMatrix4(group.matrixWorld); world.setFill([_v.x, _v.y, _v.z], 3.5, on ? [0.06, 0.052, 0.04] : [0, 0, 0]);
+      _v.set(4.5, 1.4, 0).applyMatrix4(group.matrixWorld); const fk = inCab ? 0.2 : 1; world.setFill([_v.x, _v.y, _v.z], 3.5, on ? [0.06 * fk, 0.052 * fk, 0.04 * fk] : [0, 0, 0]);
       return pose;
     },
     // put the camera at the driver's eyes, looking ahead turned by yaw (+ = right) and pitch

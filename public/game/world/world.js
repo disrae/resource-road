@@ -7,18 +7,35 @@ import { WORLD } from '../../engine/terrain.js';
 import { N_SPOT, N_POINT } from '../../engine/gl/gamelight.js';
 import { buildRoute, heightSampler } from './route.js';
 import { buildGround, buildFlora } from './corridor.js';
+import { conditionFor } from './conditions.js';
+import { RUNGS } from '../quality.js';
 
-// Graphics tiers. `engine` picks the Mistline quality tier underneath.
-//   fogSteps: samples of the near-fog march; clouds: draw the engine's volumetric clouds at dusk;
-//   flora: planting density; treeRange / floraRange: draw distance [dusk, night] in metres.
-export const TIERS = {
-  low:    { label: 'Low',    engine: 'low',    fogSteps: 8,  clouds: false, flora: 0.6, treeRange: [520, 200], floraRange: [330, 150], scale: 1 },
-  medium: { label: 'Medium', engine: 'medium', fogSteps: 14, clouds: true,  flora: 0.85, treeRange: [800, 240], floraRange: [480, 190], scale: 1 },
-  high:   { label: 'High',   engine: 'high',   fogSteps: 22, clouds: true,  flora: 1.0, treeRange: [1100, 280], floraRange: [650, 230], scale: 1 },
+// Graphics levels: what is fixed when the page loads.
+//   engine    the Mistline quality tier underneath (terrain detail, weather grid, pixel budget)
+//   scale     render resolution as a fraction of the window's pixels, before the automatic ladder
+//   clouds    draw the engine's volumetric clouds in daylight
+//   flora     planting density beside the road
+//   rung      where the automatic graphics ladder starts (see ../quality.js); a level forced by the
+//             link or picked on the title screen never goes above this rung
+//   fogSteps  steps in the headlight fog march at the top rung (the shader allows up to 40)
+//   tex       sizes of the photo-scanned ground images this level downloads (normal: 0 = none)
+//   aniso     anisotropic filtering for those images
+// Everything else adapts while the game runs: world.setRung().
+// Light is for weak laptops. Film is for recording video offline (see ../film.js), not for play:
+// nothing in it is held back to keep a frame rate.
+export const LEVELS = {
+  light:    { label: 'Light',    engine: 'low',    scale: 0.75, clouds: false, flora: 0.6,  rung: 4, fogSteps: 22, tex: { albedo: 512,  normal: 0 },    aniso: 2 },
+  balanced: { label: 'Balanced', engine: 'medium', scale: 0.8,  clouds: true,  flora: 0.85, rung: 2, fogSteps: 22, tex: { albedo: 512,  normal: 512 },  aniso: 4 },
+  high:     { label: 'High',     engine: 'high',   scale: 1,    clouds: true,  flora: 1.0,  rung: 0, fogSteps: 22, tex: { albedo: 1024, normal: 1024 }, aniso: 8 },
+  film:     { label: 'Film',     engine: 'ultra',  scale: 1,    clouds: true,  flora: 1.0,  rung: 0, fogSteps: 40, tex: { albedo: 2048, normal: 2048 }, aniso: 16, offline: true },
 };
+// the name of a level from what a link or an older saved choice says ("low" and "medium" are the old names)
+export const levelName = (v) => { const k = { low: 'light', medium: 'balanced' }[v] || v; return LEVELS[k] ? k : null; };
+const FULL = { treeRange: [1100, 280], floraRange: [650, 230] };   // at the top rung: [daylight, dark]
 
-export function createWorld(canvas, tierName, scenario) {
-  const tier = TIERS[tierName] || TIERS.medium;
+export function createWorld(canvas, levelId, scenario, conditionName = null, textures = null) {
+  const tierName = LEVELS[levelId] ? levelId : 'balanced', tier = LEVELS[tierName];
+  const condition = conditionFor(scenario.look, conditionName);
   let route = null, maskTex = null, maskRect = null;
   const engine = new Engine(canvas, tier.engine, {
     terrain(h, n) {
@@ -36,14 +53,14 @@ export function createWorld(canvas, tierName, scenario) {
   engine.setDial('season', scenario.look.season);
   engine.setDial('weatherSpeed', 40);
 
-  const ground = buildGround(route);
+  const ground = buildGround(route, textures);
   const flora = buildFlora(route, { density: tier.flora });
   engine.scene.add(ground.mesh, flora.group);
 
   const spotPos = uni('uSpotPos').value, spotDir = uni('uSpotDir').value, spotCol = uni('uSpotCol').value;
   const pointPos = uni('uPointPos').value, pointCol = uni('uPointCol').value;
   const world = {
-    engine, route, ground, flora, tier, tierName, scenario, env: 'dusk', night: 0,
+    engine, route, ground, flora, tier, tierName, level: tierName, textures, scenario, condition, env: 'stage', dark: 0, rung: tier.rung,
     // spot i: position, direction (unit), intensity (0 = off), half-angle in degrees, colour
     setSpot(i, p, d, intensity, halfAngle = 24, col = [1, 0.93, 0.8]) {
       if (i >= N_SPOT) return;
@@ -57,32 +74,39 @@ export function createWorld(canvas, tierName, scenario) {
     // light scattered back from the fog around a set of lamps (lights the truck's own bodywork a little)
     setFill(p, radius, col) { uni('uFillPos').value.set(p[0], p[1], p[2], radius); uni('uFillCol').value.set(col[0], col[1], col[2]); },
     setSurfaces(types) { ground.setSurfaces(types); flora.strew(route.pullouts, types); },
-    // 'dusk' (staging area, long view) or 'night' (the drive: dark, fog down on the road)
-    setEnv(env, fogScale = 1) {
-      const L = scenario.look; world.env = env; world.night = env === 'night' ? 1 : 0;
-      engine.setDials(L.dusk);
-      const fp = uni('uFogParams').value;
-      if (env === 'night') {
-        engine.setDials(L.night);
-        engine.drawClouds = false;
-        fp.set(3 / L.fog.visibility * fogScale, L.fog.top, L.fog.topSoftness, 0.6);
-        uni('uFogAmb').value.set(...(L.fog.ambient || [0.0012, 0.0018, 0.0028]));
-        uni('uFogSky').value.set(...(L.fog.sky || [0.0026, 0.0038, 0.006]));
+    // 'stage' (the staging area at dusk, long view) or 'drive' (the scenario's condition: by default night and fog)
+    setEnv(env) {
+      const L = scenario.look, C = condition, drive = env === 'drive'; world.env = env; world.dark = drive && C.dark ? 1 : 0;
+      engine.setDials(L.stage);
+      if (drive) engine.setDials(C.dials);
+      const fp = uni('uFogParams').value, fog = drive ? C.fog : null;
+      if (fog) fp.set(3 / fog.visibility, fog.top ?? L.fogTop, fog.topSoftness ?? L.fogTopSoftness ?? 16, 0.6);
+      else fp.set(0, L.fogTop, 16, 0.6);
+      uni('uFogAmb').value.set(...(C.fogAmbient || [0.0017, 0.0026, 0.004]));
+      uni('uFogSky').value.set(...(C.fogSky || [0.0036, 0.0054, 0.0085]));
+      uni('uFogGlow').value = C.fogGlow ?? 0.011;
+      uni('uSnowCover').value = drive ? C.snow || 0 : 0; uni('uRain').value = drive ? C.rain || 0 : 0;
+      if (world.dark) {
         // fixed exposure at night (the meter is pinned), so the dark stays dark and the lamps set the picture
-        engine.exposureGain = (L.nightExposure ?? 7) / (0.62 * 0.45 * Math.pow(2, 6.6)); engine.meterKey = 1e-4;
-        uni('uFogGlow').value = L.fog.glow ?? 0.012;
-      } else {
-        engine.drawClouds = tier.clouds;
-        fp.set(0, L.fog.top, L.fog.topSoftness, 0.6);
-        engine.exposureGain = 1; engine.meterKey = 1;
-      }
-      engine.fixedNear = env === 'night' ? 0.12 : 0.35;
-      uni('uFogSteps').value = tier.fogSteps;
-      engine.trees.setDensity(engine.quality.trees, tier.treeRange[world.night]);
-      world.floraRange = tier.floraRange[world.night];
+        engine.exposureGain = (C.exposure ?? 7) / (0.62 * 0.45 * Math.pow(2, 6.6)); engine.meterKey = 1e-4;
+      } else { engine.exposureGain = 1; engine.meterKey = 1; }
+      // in fog at night nothing is seen of the clouds, so the weather simulation and cloud march are skipped
+      engine.drawClouds = tier.clouds && !(world.dark && fog && fog.visibility < 300);
+      engine.fixedNear = drive ? 0.12 : 0.35;
+      world.setRung(world.rung);
+    },
+    // one rung of the automatic graphics ladder (../quality.js): only numbers read every frame change
+    setRung(i) {
+      const r = RUNGS[Math.max(0, Math.min(RUNGS.length - 1, i))], q0 = world.baseQuality, short = world.dark ? 1 : 0;
+      world.rung = i;
+      world.fogSteps = uni('uFogSteps').value = Math.max(6, Math.round(tier.fogSteps * r.fog));
+      engine.trees.setDensity(q0.trees, Math.max(120, FULL.treeRange[short] * r.range * (0.55 + 0.45 * q0.trees)));
+      world.floraRange = Math.max(90, FULL.floraRange[short] * r.range);
+      engine.quality = { ...q0, maxSteps: Math.max(28, Math.round(q0.maxSteps * r.cloud)), stepScale: q0.stepScale / r.cloud };
+      if (engine.autoScale !== r.res) { engine.autoScale = r.res; if (engine.cssW) engine.setSize(engine.cssW, engine.cssH, engine.dpr, engine.fixed); }
     },
     setFog(visibility, top) { const fp = uni('uFogParams').value; fp.x = visibility > 0 ? 3 / visibility : 0; if (top != null) fp.y = top; },
-    resize(w, h, dpr, fixed = null) { engine.userScale = tier.scale; engine.setSize(w, h, dpr, fixed); },
+    resize(w, h, dpr, fixed = null) { engine.userScale = tier.scale / world.baseQuality.scale; engine.setSize(w, h, dpr, fixed); },
     frame(dt, opts) { flora.update(engine.camera, world.floraRange || 400); engine.frame(dt, opts); },
     // camera helper in road coordinates: eye at (s, u, height above the road), looking along the road
     // turned by yaw (radians, positive = right) and pitched by pitch
@@ -92,6 +116,7 @@ export function createWorld(canvas, tierName, scenario) {
       cam.rotation.set(pitch, Math.atan2(-f.tx, -f.tz) - yaw, 0, 'YXZ');
     },
   };
-  world.setEnv('dusk');
+  world.baseQuality = { ...engine.quality };
+  world.setEnv('stage');
   return world;
 }

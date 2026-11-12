@@ -97,6 +97,8 @@ html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
 #ui .screen.show { display: flex; }
 #ui .screen.loading { background: #06080a; align-items: center; justify-content: center; text-align: center; }
 #ui .screen.loading .sub { opacity: 0.7; font-size: 1.2em; }
+#ui .screen.loading .bar { width: min(22em, 70vw); height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.14); overflow: hidden; }
+#ui .screen.loading .bar .fill { width: 0; height: 100%; background: #ffb238; transition: width 0.15s linear; }
 #ui .screen.title { align-items: flex-end; justify-content: flex-start; padding: 6vh 5vw; background: linear-gradient(90deg, rgba(4, 6, 8, 0.78) 0%, rgba(4, 6, 8, 0.45) 36%, rgba(4, 6, 8, 0) 62%); }
 #ui .title-box { display: flex; flex-direction: column; gap: 1.1em; align-items: flex-start; max-width: 34em; }
 #ui .screen.loading .title-box { align-items: center; }
