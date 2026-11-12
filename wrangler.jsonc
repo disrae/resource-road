@@ -1,0 +1,6 @@
+{
+  "name": "resource-road",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./public" },
+  "workers_dev": true
+}
